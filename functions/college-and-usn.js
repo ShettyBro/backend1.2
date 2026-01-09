@@ -1,6 +1,15 @@
 // college-and-usn.js
 const sql = require('mssql');
 
+// Debug logging - remove after fixing
+console.log('Environment check:', {
+  hasUser: !!process.env.DB_USER,
+  hasPassword: !!process.env.DB_PASSWORD,
+  hasServer: !!process.env.DB_SERVER,
+  hasDatabase: !!process.env.DB_NAME,
+  serverValue: process.env.DB_SERVER // This will show in logs
+});
+
 const dbConfig = {
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
@@ -108,7 +117,10 @@ exports.handler = async (event) => {
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: 'An error occurred processing your request' }),
+      body: JSON.stringify({ 
+        error: 'An error occurred processing your request',
+        details: error.message // Add this temporarily for debugging
+      }),
     };
   } finally {
     if (pool) {
