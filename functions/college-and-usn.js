@@ -46,7 +46,7 @@ exports.handler = async (event) => {
       }
 
       const result = await pool.request().query(`
-        SELECT college_id, college_name, college_code
+        SELECT college_id, college_name, college_code, place
         FROM colleges
         WHERE is_active = 1
         ORDER BY college_name ASC
