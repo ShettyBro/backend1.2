@@ -70,8 +70,28 @@ exports.handler = async (event) => {
 
     // ===== POST: Handle actions =====
     if (event.httpMethod === 'POST') {
-      const body = JSON.parse(event.body || '{}');
+
+      if (!event.body) {
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({ error: "Missing request body" }),
+        };
+      }
+
+      let body;
+      try {
+        body = JSON.parse(event.body);
+      } catch (e) {
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({ error: "Invalid JSON" }),
+        };
+      }
+
       const { action, usn } = body;
+
 
       // ACTION: check_usn
       if (action === 'check_usn') {
@@ -100,6 +120,8 @@ exports.handler = async (event) => {
           body: JSON.stringify({ exists: result.recordset.length > 0 }),
         };
       }
+
+
 
       // ACTION: validate_and_fetch_college
       if (action === 'validate_and_fetch_college') {
