@@ -69,6 +69,9 @@ exports.handler = async (event) => {
     }
 
     // ===== POST: Handle actions =====
+    
+
+    console.log("RAW BODY:", event.body);
     if (event.httpMethod === 'POST') {
 
       if (!event.body) {
@@ -89,6 +92,7 @@ exports.handler = async (event) => {
           body: JSON.stringify({ error: "Invalid JSON" }),
         };
       }
+      console.log("PARSED:", body);
 
       const { action, usn } = body;
 
