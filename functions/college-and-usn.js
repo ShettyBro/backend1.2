@@ -1,13 +1,12 @@
 // college-and-usn.js
 const sql = require('mssql');
 
-// Debug logging - remove after fixing
 console.log('Environment check:', {
   hasUser: !!process.env.DB_USER,
   hasPassword: !!process.env.DB_PASSWORD,
   hasServer: !!process.env.DB_SERVER,
   hasDatabase: !!process.env.DB_NAME,
-  serverValue: process.env.DB_SERVER // This will show in logs
+  serverValue: process.env.DB_SERVER
 });
 
 const dbConfig = {
@@ -43,6 +42,7 @@ exports.handler = async (event) => {
   try {
     pool = await sql.connect(dbConfig);
 
+    // ===== GET: Fetch all colleges =====
     if (event.httpMethod === 'GET') {
       const action = event.queryStringParameters?.action;
 
@@ -68,41 +68,98 @@ exports.handler = async (event) => {
       };
     }
 
+    // ===== POST: Handle actions =====
     if (event.httpMethod === 'POST') {
       const body = JSON.parse(event.body || '{}');
       const { action, usn } = body;
 
-      if (action !== 'check_usn') {
+      // ACTION: check_usn
+      if (action === 'check_usn') {
+        if (!usn || typeof usn !== 'string' || !usn.trim()) {
+          return {
+            statusCode: 400,
+            headers,
+            body: JSON.stringify({ error: 'USN is required' }),
+          };
+        }
+
+        const normalizedUSN = usn.trim().toUpperCase();
+
+        const result = await pool
+          .request()
+          .input('usn', sql.VarChar(50), normalizedUSN)
+          .query(`
+            SELECT student_id
+            FROM students
+            WHERE usn = @usn
+          `);
+
         return {
-          statusCode: 400,
+          statusCode: 200,
           headers,
-          body: JSON.stringify({ error: 'Invalid action' }),
+          body: JSON.stringify({ exists: result.recordset.length > 0 }),
         };
       }
 
-      if (!usn || typeof usn !== 'string' || !usn.trim()) {
+      // ACTION: validate_and_fetch_college
+      if (action === 'validate_and_fetch_college') {
+        if (!usn || typeof usn !== 'string' || !usn.trim()) {
+          return {
+            statusCode: 400,
+            headers,
+            body: JSON.stringify({ error: 'USN is required' }),
+          };
+        }
+
+        const normalizedUSN = usn.trim().toUpperCase();
+
+        const result = await pool
+          .request()
+          .input('usn', sql.VarChar(50), normalizedUSN)
+          .query(`
+            SELECT 
+              s.student_id,
+              s.college_id,
+              c.college_code,
+              c.college_name,
+              c.place
+            FROM students s
+            INNER JOIN colleges c ON s.college_id = c.college_id
+            WHERE s.usn = @usn
+          `);
+
+        if (result.recordset.length === 0) {
+          return {
+            statusCode: 404,
+            headers,
+            body: JSON.stringify({
+              exists: false,
+              error: 'Invalid USN. Please check and try again or register first.'
+            }),
+          };
+        }
+
+        const studentData = result.recordset[0];
+
         return {
-          statusCode: 400,
+          statusCode: 200,
           headers,
-          body: JSON.stringify({ error: 'USN is required' }),
+          body: JSON.stringify({
+            exists: true,
+            student_id: studentData.student_id,
+            college_id: studentData.college_id,
+            college_code: studentData.college_code,
+            college_name: studentData.college_name,
+            place: studentData.place
+          }),
         };
       }
 
-      const normalizedUSN = usn.trim().toUpperCase();
-
-      const result = await pool
-        .request()
-        .input('usn', sql.VarChar(50), normalizedUSN)
-        .query(`
-          SELECT student_id
-          FROM students
-          WHERE usn = @usn
-        `);
-
+      // Invalid action
       return {
-        statusCode: 200,
+        statusCode: 400,
         headers,
-        body: JSON.stringify({ exists: result.recordset.length > 0 }),
+        body: JSON.stringify({ error: 'Invalid action' }),
       };
     }
 
@@ -117,9 +174,9 @@ exports.handler = async (event) => {
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ 
+      body: JSON.stringify({
         error: 'An error occurred processing your request',
-        details: error.message // Add this temporarily for debugging
+        details: error.message
       }),
     };
   } finally {
