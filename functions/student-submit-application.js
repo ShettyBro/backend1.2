@@ -197,7 +197,7 @@ const initApplication = async (pool, auth, body) => {
   // But since that doesn't exist, we'll pass it back to frontend and they'll send it again on finalize
   
   // Generate SAS URLs for 3 documents
-  const blobBasePath = `${college_code}/${auth.usn}`;
+  const blobBasePath = `${college_code}/${auth.usn}/application`;
   
   const upload_urls = {
     aadhaar: generateSASUrl(`${blobBasePath}/aadhaar`),
@@ -315,7 +315,7 @@ const finalizeApplication = async (pool, auth, body) => {
   const application_id = insertResult.recordset[0].application_id;
 
   // Insert 3 document records
-  const blobBasePath = `${college_code}/${auth.usn}`;
+  const blobBasePath = `${college_code}/${auth.usn}/application`;
   const documents = [
     { type: 'AADHAR', url: `https://${AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net/${CONTAINER_NAME}/${blobBasePath}/aadhaar` },
     { type: 'COLLEGE_ID', url: `https://${AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net/${CONTAINER_NAME}/${blobBasePath}/college_id_card` },
