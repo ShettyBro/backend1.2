@@ -127,60 +127,6 @@ exports.handler = async (event) => {
 
 
 
-      // ACTION: validate_and_fetch_college
-      if (action === 'validate_and_fetch_college') {
-        if (!usn || typeof usn !== 'string' || !usn.trim()) {
-          return {
-            statusCode: 400,
-            headers,
-            body: JSON.stringify({ error: 'USN is required' }),
-          };
-        }
-
-        const normalizedUSN = usn.trim().toUpperCase();
-
-        const result = await pool
-          .request()
-          .input('usn', sql.VarChar(50), normalizedUSN)
-          .query(`
-            SELECT 
-              s.student_id,
-              s.college_id,
-              c.college_code,
-              c.college_name,
-              c.place
-            FROM students s
-            INNER JOIN colleges c ON s.college_id = c.college_id
-            WHERE s.usn = @usn
-          `);
-
-        if (result.recordset.length === 0) {
-          return {
-            statusCode: 404,
-            headers,
-            body: JSON.stringify({
-              exists: false,
-              error: 'Invalid USN. Please check and try again or register first.'
-            }),
-          };
-        }
-
-        const studentData = result.recordset[0];
-
-        return {
-          statusCode: 200,
-          headers,
-          body: JSON.stringify({
-            exists: true,
-            student_id: studentData.student_id,
-            college_id: studentData.college_id,
-            college_code: studentData.college_code,
-            college_name: studentData.college_name,
-            place: studentData.place
-          }),
-        };
-      }
-
       // Invalid action
       return {
         statusCode: 400,
