@@ -117,36 +117,20 @@ const initApplication = async (pool, auth, body) => {
 
   const college_code = studentResult.recordset[0].college_code;
 
-  // Check if student has existing applications
-  const existingApp = await pool
-    .request()
-    .input('student_id', sql.Int, auth.student_id)
-    .query(`
-      SELECT application_id, status
-      FROM student_applications
-      WHERE student_id = @student_id
-      ORDER BY application_id DESC
-    `);
-
-  // Block if status is SUBMITTED, UNDER_REVIEW, APPROVED, or FINAL_APPROVED
-  if (existingApp.recordset.length > 0) {
-    const latestStatus = existingApp.recordset[0].status;
-    if (['SUBMITTED', 'UNDER_REVIEW', 'APPROVED', 'FINAL_APPROVED'].includes(latestStatus)) {
-      return {
-        statusCode: 403,
-        headers,
-        body: JSON.stringify({
-          error: `Cannot apply. Your application is currently ${latestStatus}`,
-        }),
-      };
-    }
-  }
-
-  // Check reapply_count - block if >= 2 rejections
+  // Check if student has existing applications and reapply count
   const studentInfo = await pool
     .request()
     .input('student_id', sql.Int, auth.student_id)
-    .query(`SELECT reapply_count FROM students WHERE student_id = @student_id`);
+    .query(`
+      SELECT 
+        s.reapply_count,
+        sa.application_id,
+        sa.status
+      FROM students s
+      LEFT JOIN student_applications sa ON s.student_id = sa.student_id
+      WHERE s.student_id = @student_id
+      ORDER BY sa.application_id DESC
+    `);
 
   if (studentInfo.recordset.length === 0) {
     return {
@@ -156,14 +140,28 @@ const initApplication = async (pool, auth, body) => {
     };
   }
 
-  const reapply_count = studentInfo.recordset[0].reapply_count;
+  const student = studentInfo.recordset[0];
+  const reapply_count = student.reapply_count;
+  const latestStatus = student.status; // null if no application exists
 
+  // Block if reapply_count >= 2 (already rejected twice)
   if (reapply_count >= 2) {
     return {
       statusCode: 403,
       headers,
       body: JSON.stringify({
-        error: 'You have reached the maximum number of reapplications (2 rejections)',
+        error: 'You have been rejected twice. Maximum reapplication limit reached.',
+      }),
+    };
+  }
+
+  // Block if status is SUBMITTED, UNDER_REVIEW, APPROVED, or FINAL_APPROVED
+  if (latestStatus && ['SUBMITTED', 'UNDER_REVIEW', 'APPROVED', 'FINAL_APPROVED'].includes(latestStatus)) {
+    return {
+      statusCode: 403,
+      headers,
+      body: JSON.stringify({
+        error: `Cannot apply. Your application is currently ${latestStatus}`,
       }),
     };
   }
@@ -292,27 +290,90 @@ const finalizeApplication = async (pool, auth, body) => {
   // Verify all 3 documents exist in Azure Blob (optional check)
   // For now, we'll trust frontend uploaded them successfully
   
-  // Insert into student_applications with status='SUBMITTED'
-  const insertResult = await pool
+  // Check if this is a reapplication (status = REJECTED and reapply_count < 2)
+  const existingApp = await pool
     .request()
     .input('student_id', sql.Int, auth.student_id)
-    .input('blood_group', sql.VarChar(5), blood_group)
-    .input('address', sql.VarChar(500), address.trim())
-    .input('department', sql.VarChar(100), department)
-    .input('year_of_study', sql.Int, parseInt(year_of_study))
-    .input('semester', sql.Int, parseInt(semester))
-    .input('college_code', sql.VarChar(20), college_code)
     .query(`
-      INSERT INTO student_applications (
-        student_id, blood_group, address, department, year_of_study, semester, college_code, status, submitted_at
-      )
-      OUTPUT INSERTED.application_id
-      VALUES (
-        @student_id, @blood_group, @address, @department, @year_of_study, @semester, @college_code, 'SUBMITTED', SYSUTCDATETIME()
-      )
+      SELECT TOP 1 application_id, status
+      FROM student_applications
+      WHERE student_id = @student_id
+      ORDER BY application_id DESC
     `);
 
-  const application_id = insertResult.recordset[0].application_id;
+  let application_id;
+
+  if (existingApp.recordset.length > 0 && existingApp.recordset[0].status === 'REJECTED') {
+    // This is a REAPPLICATION - Update existing record
+    const existingAppId = existingApp.recordset[0].application_id;
+
+    // Update the existing application
+    await pool
+      .request()
+      .input('application_id', sql.Int, existingAppId)
+      .input('blood_group', sql.VarChar(5), blood_group)
+      .input('address', sql.VarChar(500), address.trim())
+      .input('department', sql.VarChar(100), department)
+      .input('year_of_study', sql.Int, parseInt(year_of_study))
+      .input('semester', sql.Int, parseInt(semester))
+      .input('college_code', sql.VarChar(20), college_code)
+      .query(`
+        UPDATE student_applications
+        SET 
+          blood_group = @blood_group,
+          address = @address,
+          department = @department,
+          year_of_study = @year_of_study,
+          semester = @semester,
+          college_code = @college_code,
+          status = 'SUBMITTED',
+          submitted_at = SYSUTCDATETIME(),
+          rejected_reason = NULL,
+          reviewed_at = NULL
+        WHERE application_id = @application_id
+      `);
+
+    application_id = existingAppId;
+
+    // Increment reapply_count in students table
+    await pool
+      .request()
+      .input('student_id', sql.Int, auth.student_id)
+      .query(`
+        UPDATE students
+        SET reapply_count = reapply_count + 1
+        WHERE student_id = @student_id
+      `);
+
+    // Delete old documents
+    await pool
+      .request()
+      .input('application_id', sql.Int, application_id)
+      .query(`DELETE FROM application_documents WHERE application_id = @application_id`);
+
+  } else {
+    // This is a NEW APPLICATION - Insert new record
+    const insertResult = await pool
+      .request()
+      .input('student_id', sql.Int, auth.student_id)
+      .input('blood_group', sql.VarChar(5), blood_group)
+      .input('address', sql.VarChar(500), address.trim())
+      .input('department', sql.VarChar(100), department)
+      .input('year_of_study', sql.Int, parseInt(year_of_study))
+      .input('semester', sql.Int, parseInt(semester))
+      .input('college_code', sql.VarChar(20), college_code)
+      .query(`
+        INSERT INTO student_applications (
+          student_id, blood_group, address, department, year_of_study, semester, college_code, status, submitted_at
+        )
+        OUTPUT INSERTED.application_id
+        VALUES (
+          @student_id, @blood_group, @address, @department, @year_of_study, @semester, @college_code, 'SUBMITTED', SYSUTCDATETIME()
+        )
+      `);
+
+    application_id = insertResult.recordset[0].application_id;
+  }
 
   // Insert 3 document records
   const blobBasePath = `${college_code}/${auth.usn}/application`;
@@ -346,6 +407,57 @@ const finalizeApplication = async (pool, auth, body) => {
     body: JSON.stringify({
       message: 'Application submitted successfully',
       application_id,
+    }),
+  };
+};
+
+// ============================================================================
+// ACTION: get_application_status
+// ============================================================================
+const getApplicationStatus = async (pool, auth) => {
+  const result = await pool
+    .request()
+    .input('student_id', sql.Int, auth.student_id)
+    .query(`
+      SELECT TOP 1 
+        sa.application_id, 
+        sa.status, 
+        sa.submitted_at,
+        sa.rejected_reason,
+        sa.reviewed_at,
+        s.reapply_count
+      FROM student_applications sa
+      INNER JOIN students s ON sa.student_id = s.student_id
+      WHERE sa.student_id = @student_id
+      ORDER BY sa.application_id DESC
+    `);
+
+  if (result.recordset.length === 0) {
+    return {
+      statusCode: 200,
+      headers,
+      body: JSON.stringify({ 
+        application: null,
+        message: 'No application found. You can submit a new application.'
+      }),
+    };
+  }
+
+  const app = result.recordset[0];
+
+  return {
+    statusCode: 200,
+    headers,
+    body: JSON.stringify({
+      application: {
+        application_id: app.application_id,
+        status: app.status,
+        submitted_at: app.submitted_at,
+        rejected_reason: app.rejected_reason,
+        reviewed_at: app.reviewed_at,
+        reapply_count: app.reapply_count,
+        can_reapply: app.status === 'REJECTED' && app.reapply_count < 2
+      }
     }),
   };
 };
@@ -400,6 +512,8 @@ exports.handler = async (event) => {
       return await initApplication(pool, auth, body);
     } else if (action === 'finalize_application') {
       return await finalizeApplication(pool, auth, body);
+    } else if (action === 'get_application_status') {
+      return await getApplicationStatus(pool, auth);
     } else {
       return {
         statusCode: 400,
