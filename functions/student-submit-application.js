@@ -409,6 +409,12 @@ exports.handler = async (event) => {
     }
   } catch (error) {
     console.error('Error:', error);
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      code: error.code,
+      number: error.number
+    });
 
     if (error.message.includes('Authorization') || error.message.includes('Unauthorized')) {
       return {
@@ -421,7 +427,10 @@ exports.handler = async (event) => {
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: 'Internal server error' }),
+      body: JSON.stringify({ 
+        error: 'Internal server error',
+        details: error.message // ✅ Send actual error to frontend for debugging
+      }),
     };
   } finally {
     if (pool) {
